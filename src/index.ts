@@ -8,19 +8,17 @@ import {
 } from "@elizaos/core";
 import { bootstrapPlugin } from "@elizaos/plugin-bootstrap";
 import { createNodePlugin } from "@elizaos/plugin-node";
-import { solanaPlugin } from "@elizaos/plugin-solana";
+import { pythDataPlugin } from "@elizaos/plugin-pyth-data";
+import { PocketFinanceSonicPlugin } from "@elizaos/plugin-sonic";
 import fs from "fs";
 import net from "net";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initializeDbCache } from "./cache/index.ts";
 import { character } from "./character.ts";
-import { startChat } from "./chat/index.ts";
 import { initializeClients } from "./clients/index.ts";
 import {
   getTokenForProvider,
-  loadCharacters,
-  parseArguments,
 } from "./config/index.ts";
 import { initializeDatabase } from "./database/index.ts";
 
@@ -58,7 +56,8 @@ export function createAgent(
     plugins: [
       bootstrapPlugin,
       nodePlugin,
-      character.settings?.secrets?.WALLET_PUBLIC_KEY ? solanaPlugin : null,
+      pythDataPlugin,
+      PocketFinanceSonicPlugin
     ].filter(Boolean),
     providers: [],
     actions: [],
@@ -74,6 +73,8 @@ async function startAgent(character: Character, directClient: DirectClient) {
     character.username ??= character.name;
 
     const token = getTokenForProvider(character.modelProvider, character);
+    console.log("Starting agent with ID:", character.id);
+    
     const dataDir = path.join(__dirname, "../data");
 
     if (!fs.existsSync(dataDir)) {
@@ -81,19 +82,17 @@ async function startAgent(character: Character, directClient: DirectClient) {
     }
 
     const db = initializeDatabase(dataDir);
-
     await db.init();
 
     const cache = initializeDbCache(character, db);
     const runtime = createAgent(character, db, cache, token);
 
     await runtime.initialize();
-
     runtime.clients = await initializeClients(character, runtime);
 
     directClient.registerAgent(runtime);
+    console.log("Agent registered with ID:", runtime.agentId);
 
-    // report to console
     elizaLogger.debug(`Started ${character.name} as ${runtime.agentId}`);
 
     return runtime;
@@ -128,23 +127,14 @@ const checkPortAvailable = (port: number): Promise<boolean> => {
 
 const startAgents = async () => {
   const directClient = new DirectClient();
-  let serverPort = parseInt(settings.SERVER_PORT || "3000");
-  const args = parseArguments();
+  let serverPort = parseInt(settings.SERVER_PORT);
 
-  let charactersArg = args.characters || args.character;
-  let characters = [character];
-
-  console.log("charactersArg", charactersArg);
-  if (charactersArg) {
-    characters = await loadCharacters(charactersArg);
-  }
-  console.log("characters", characters);
   try {
-    for (const character of characters) {
-      await startAgent(character, directClient as DirectClient);
-    }
+    const runtime = await startAgent(character, directClient as DirectClient);
+    console.log("Agent runtime created with ID:", runtime.agentId);
   } catch (error) {
     elizaLogger.error("Error starting agents:", error);
+    process.exit(1);
   }
 
   while (!(await checkPortAvailable(serverPort))) {
@@ -152,23 +142,18 @@ const startAgents = async () => {
     serverPort++;
   }
 
-  // upload some agent functionality into directClient
   directClient.startAgent = async (character: Character) => {
-    // wrap it so we don't have to inject directClient later
     return startAgent(character, directClient);
   };
 
-  directClient.start(serverPort);
+  await new Promise<void>((resolve) => {
+    directClient.start(serverPort);
+    // Give the server a moment to initialize
+    setTimeout(resolve, 2000);
+  });
 
-  if (serverPort !== parseInt(settings.SERVER_PORT || "3000")) {
+  if (serverPort !== parseInt(settings.SERVER_PORT)) {
     elizaLogger.log(`Server started on alternate port ${serverPort}`);
-  }
-
-  const isDaemonProcess = process.env.DAEMON_PROCESS === "true";
-  if(!isDaemonProcess) {
-    elizaLogger.log("Chat started. Type 'exit' to quit.");
-    const chat = startChat(characters);
-    chat();
   }
 };
 

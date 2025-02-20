@@ -2,6 +2,7 @@ import { AutoClientInterface } from "@elizaos/client-auto";
 import { DiscordClientInterface } from "@elizaos/client-discord";
 import { TelegramClientInterface } from "@elizaos/client-telegram";
 import { TwitterClientInterface } from "@elizaos/client-twitter";
+import { DirectClientInterface } from "@elizaos/client-direct";
 import { Character, IAgentRuntime } from "@elizaos/core";
 
 export async function initializeClients(
@@ -14,6 +15,11 @@ export async function initializeClients(
   if (clientTypes.includes("auto")) {
     const autoClient = await AutoClientInterface.start(runtime);
     if (autoClient) clients.push(autoClient);
+  }
+  
+  if (clientTypes.includes("direct")) {
+    const directClient = await DirectClientInterface.start(runtime);
+    if (directClient) clients.push(directClient);
   }
 
   if (clientTypes.includes("discord")) {
